@@ -2505,6 +2505,9 @@ namespace filesystem {
     _EXPORT_STD enum class directory_options { none = 0, follow_directory_symlink = 1, skip_permission_denied = 2 };
     _BITMASK_OPS(_EXPORT_STD, directory_options)
 
+
+    _EXPORT_STD _NODISCARD inline bool exists(const path& _Target);
+
     struct _Dir_enum_impl {
         _NODISCARD static __std_win_error _Advance_and_reset_if_no_more_files(shared_ptr<_Dir_enum_impl>& _Ptr) {
             auto& _Impl = *_Ptr;
@@ -2536,14 +2539,32 @@ namespace filesystem {
             return __std_win_error::_Success;
         }
 
-        _NODISCARD static __std_win_error _Open_dir(
-            path& _Path, const directory_options _Options_arg, _Find_file_handle& _Dir, __std_fs_find_data& _Data) {
+        _NODISCARD static constexpr bool _Is_Volume_Name(const std::wstring_view s) 
+        {
+            return (s.length() == 48 || (s.length() == 49 && s[48] == L'\\')) 
+                && s[0] == L'\\' && (s[1] == L'?' || s[1] == L'\\') && s[2] == L'?' && s[3] == L'\\'
+                && s[4] == L'V' && s[5] == L'o' && s[6] == L'l' && s[7] == L'u'
+                && s[8] == L'm' && s[9] == L'e' && s[10] == L'{' && s[19] == L'-'
+                && s[24] == L'-' && s[29] == L'-' && s[34] == L'-'
+                && s[47] == L'}';
+        }
+
+
+        _NODISCARD static __std_win_error _Open_dir(const path& _Path, const directory_options _Options_arg, _Find_file_handle& _Dir, __std_fs_find_data& _Data) {
             const size_t _Null_term_len = _CSTD wcslen(_Path.c_str());
             if (_Null_term_len == 0 || _Null_term_len != _Path.native().size()) {
                 return __std_win_error::_File_not_found;
             }
 
-            _Path /= L"*"sv;
+            std::wstring _Path_spec = _Path.wstring();
+
+            if (_Path_spec.ends_with(path::preferred_separator) 
+                && !_Is_Volume_Name(_Path_spec)) {
+                _Path_spec[_Path_spec.length() - 1] = L'*';
+            } else {
+                _Path_spec.append(1, L'*');
+            }
+
             auto _Error = _Dir._Open(_Path.c_str(), &_Data);
             if (_Error == __std_win_error::_Success) {
                 return _Skip_dots(_Dir._Handle, _Data);
@@ -2551,6 +2572,8 @@ namespace filesystem {
 
             if (_Error == __std_win_error::_Access_denied
                 && _Bitmask_includes_any(_Options_arg, directory_options::skip_permission_denied)) {
+                _Error = __std_win_error::_No_more_files;
+            } else if (_Error == __std_win_error::_File_not_found && exists(_Path)) {
                 _Error = __std_win_error::_No_more_files;
             }
 
